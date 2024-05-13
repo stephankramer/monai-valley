@@ -4,29 +4,50 @@ import os
 import scipy.interpolate as si
 
 
-def interpolate_bathymetry(bathymetry_2d, nc_file_name="raw_data/Bathymetry.grd"):
-    """
-    Interpolate a bathymetry field from some data set.
+class BathymetryInterpolator:
+    def __init__(self, bathymetry2d, nc_file_name="raw_data/Bathymetry.grd"):
+        """
+        Interpolate a bathymetry field from some data set.
 
-    :arg bathymetry_2d: :class:`Function` to store the data in
-    :kwarg nc_file_name: netcdf file with bathymetry
-    """
-    mesh = bathymetry_2d.function_space().mesh()
+        :arg bathymetry_2d: :class:`Function` to store the data in
+        :kwarg nc_file_name: netcdf file with bathymetry
+        """
+        self.bathymetry2d = bathymetry2d
+        self.mesh = bathymetry2d.function_space().mesh()
 
-    # Read data from file
-    with netCDF4.Dataset(nc_file_name, "r") as nc:
-        interp = si.RectBivariateSpline(
-            nc.variables["y"][:],
-            nc.variables["x"][:],
-            nc.variables["z"][:, :],
-        )
+        # Read data from file
+        with netCDF4.Dataset(nc_file_name, "r") as nc:
+            self.interp = si.RectBivariateSpline(
+                nc.variables["y"][:],
+                nc.variables["x"][:],
+                nc.variables["z"][:, :],
+            )
+        self.interpolate()
 
-    # Interpolate at mesh vertices
-    xy = mesh.coordinates.dat.data[:]
-    bathymetry_2d.dat.data[:] = -interp(xy[:,1], xy[:,0], grid=False)
+    def interpolate(self):
+        """
+        Interpolate a bathymetry field from some data set.
+        """
+        # Interpolate at mesh vertices
+        xy = self.mesh.coordinates.dat.data[:]
+        self.bathymetry2d.dat.data[:] = -self.interp(xy[:,1], xy[:,0], grid=False)
 
 
-def construct_solver(bathymetry_2d, left_id=10, input_wave_csv='raw_data/InputWave.csv',
+class DepthExporter:
+    name = 'depth'
+    def __init__(self, solver_obj):
+        fname = os.path.join(solver_obj.options.output_directory, 'Depth.pvd')
+        self.f = File(fname, 'w')
+        self.depth = Function(solver_obj.function_spaces.H_2d, name='Depth')
+        self.depth_expr = solver_obj.depth.get_total_depth(solver_obj.fields.elev_2d)
+        self.bathymetry2d = solver_obj.fields.bathymetry_2d
+
+    def evaluate(self, index):
+        self.depth.interpolate(self.depth_expr)
+        self.f.write(self.depth, self.bathymetry2d)
+
+
+def construct_solver(bathymetry_2d, left_id=1, input_wave_csv='raw_data/InputWave.csv',
         store_station_time_series=False, **model_options):
     """
     Construct a *linear* shallow water equation solver for tsunami
@@ -59,12 +80,6 @@ def construct_solver(bathymetry_2d, left_id=10, input_wave_csv='raw_data/InputWa
 
     if not hasattr(options.swe_timestepper_options, "use_automatic_timestep"):
         options.timestep = dt
-    #options.swe_timestepper_options.solver_parameters = {
-    #    "snes_type": "newtonls",
-    #    "ksp_type": "gmres",
-    #    "pc_type": "bjacobi",
-    #    "sub_pc_type": "ilu",
-    #}
     options.update(model_options)
 
 
